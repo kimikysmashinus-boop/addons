@@ -1,0 +1,7 @@
+## Interface: 11502
+## Title: ItemTracker
+## Notes: Tracks items
+## SavedVariables: ItemTrackerDB
+
+ItemTracker.lua
+
