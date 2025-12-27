@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker — Classic Era 1.15+
--- Drag-sort + Count Column + Tier Menu + Color + Ghost + Notes
+-- Drag-sort + Count Column + Tier Menu + Color + Ghost + Notes + Add Item ID
 -- ==========================================================
 
 local addonName = ...
@@ -64,21 +64,48 @@ end
 -- ==========================================================
 
 local function InitDB()
+    -- === CREATE DB ===
     ItemTrackerDB = ItemTrackerDB or {}
     ItemTrackerDB.order = ItemTrackerDB.order or {}
     ItemTrackerDB.notes = ItemTrackerDB.notes or {}
     ItemTrackerDB.tiers = ItemTrackerDB.tiers or {}
+    ItemTrackerDB.items = ItemTrackerDB.items or {}
 
-    local used = {}
-    for i = #ItemTrackerDB.order, 1, -1 do
-        local v = ItemTrackerDB.order[i]
-        if not ItemTracker.Items[v] or used[v] then
-            table.remove(ItemTrackerDB.order, i)
-        else
-            used[v] = true
+    -- === SYNC SAVED ITEMS INTO BASE LIST ===
+    for _, savedItem in ipairs(ItemTrackerDB.items) do
+        local exists = false
+        for _, baseItem in ipairs(ItemTracker.Items) do
+            if baseItem.itemID == savedItem.itemID then
+                exists = true
+                break
+            end
+        end
+
+        if not exists then
+            table.insert(ItemTracker.Items, savedItem)
         end
     end
 
+    -- === FIX ORDER (REMOVE INVALID / DUPLICATES) ===
+    local used = {}
+
+for i = #ItemTrackerDB.order, 1, -1 do
+    local idx = ItemTrackerDB.order[i]
+    if type(idx) ~= "number" or idx < 1 or idx > #ItemTracker.Items or used[idx] then
+        table.remove(ItemTrackerDB.order, i)
+    else
+        used[idx] = true
+    end
+end
+
+for i = 1, #ItemTracker.Items do
+    if not used[i] then
+        table.insert(ItemTrackerDB.order, i)
+    end
+end
+
+
+    -- === ADD MISSING ITEMS TO ORDER ===
     for i = 1, #ItemTracker.Items do
         if not used[i] then
             table.insert(ItemTrackerDB.order, i)
@@ -87,10 +114,15 @@ local function InitDB()
 end
 
 local function MoveIndex(t, from, to)
-    if from == to then return end
+    if not t or from == to then return end
+    if from < 1 or to < 1 then return end
+    if from > #t or to > #t then return end
+
     local v = table.remove(t, from)
     table.insert(t, to, v)
 end
+
+
 
 -- ==========================================================
 -- UI
@@ -116,15 +148,221 @@ frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
 
 frame.title = frame:CreateFontString(nil,"OVERLAY","GameFontNormalLarge")
 frame.title:SetPoint("TOP",0,-10)
-frame.title:SetText("ItemTracker")
+frame.title:SetText("KimiBoss")
+
+-- ==========================================================
+-- ADD ITEM BUTTON + POPUP
+-- ==========================================================
+
+-- ==========================================================
+-- ADD ITEM BUTTON + CLEAN POPUP (UI ONLY)
+-- ==========================================================
+
+-- ==========================================================
+-- ADD ITEM BUTTON (ICON + LEFT POSITION)
+-- ==========================================================
+
+-- ==========================================================
+-- ADD / REMOVE ITEM BUTTONS + POPUP
+-- ==========================================================
+
+local popupMode = "add" -- "add" | "remove"
+
+-- ==========================================================
+-- PLUS BUTTON
+-- ==========================================================
+
+local addBtn = CreateFrame("Button", nil, frame)
+addBtn:SetSize(20,20)
+addBtn:SetPoint("LEFT", frame, "TOPLEFT", 14, -12)
+addBtn:SetHighlightTexture("Interface/Buttons/ButtonHilight-Square", "ADD")
+
+addBtn.icon = addBtn:CreateTexture(nil, "ARTWORK")
+addBtn.icon:SetAllPoints()
+addBtn.icon:SetTexture("Interface/Buttons/UI-PlusButton-Up")
+
+addBtn:SetScript("OnEnter", function(self)
+    self.icon:SetVertexColor(1, 0.82, 0)
+end)
+addBtn:SetScript("OnLeave", function(self)
+    self.icon:SetVertexColor(1,1,1)
+end)
+
+-- ==========================================================
+-- MINUS BUTTON
+-- ==========================================================
+
+local removeBtn = CreateFrame("Button", nil, frame)
+removeBtn:SetSize(20,20)
+removeBtn:SetPoint("LEFT", addBtn, "RIGHT", 4, 0)
+removeBtn:SetHighlightTexture("Interface/Buttons/ButtonHilight-Square", "ADD")
+
+removeBtn.icon = removeBtn:CreateTexture(nil, "ARTWORK")
+removeBtn.icon:SetAllPoints()
+removeBtn.icon:SetTexture("Interface/Buttons/UI-MinusButton-Up")
+
+removeBtn:SetScript("OnEnter", function(self)
+    self.icon:SetVertexColor(1, 0.3, 0.3)
+end)
+removeBtn:SetScript("OnLeave", function(self)
+    self.icon:SetVertexColor(1,1,1)
+end)
+
+-- ==========================================================
+-- POPUP FRAME
+-- ==========================================================
+
+local addFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+addFrame:SetSize(150, 40)
+addFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    edgeSize = 10,
+})
+addFrame:SetBackdropColor(0,0,0,0.95)
+addFrame:SetFrameStrata("DIALOG")
+addFrame:SetClampedToScreen(true)
+addFrame:Hide()
+
+-- INPUT
+addFrame.input = CreateFrame("EditBox", nil, addFrame, "InputBoxTemplate")
+addFrame.input:SetSize(55,20)
+addFrame.input:SetPoint("LEFT", 10, 0)
+addFrame.input:SetNumeric(true)
+addFrame.input:SetAutoFocus(false)
+
+addFrame.input:SetScript("OnEnterPressed", function()
+    addFrame.ok:Click()
+end)
+
+addFrame.input:SetScript("OnEscapePressed", function()
+    addFrame:Hide()
+end)
+
+-- OK BUTTON
+addFrame.ok = CreateFrame("Button", nil, addFrame, "UIPanelButtonTemplate")
+addFrame.ok:SetSize(50,20)
+addFrame.ok:SetPoint("LEFT", addFrame.input, "RIGHT", 8, 0)
+addFrame.ok:SetText("OK")
+
+-- ==========================================================
+-- SHOW POPUP FUNCTION
+-- ==========================================================
+
+local function ShowPopup(mode)
+    popupMode = mode
+
+    local scale = UIParent:GetScale()
+    local x, y = GetCursorPosition()
+    x = x / scale
+    y = y / scale
+
+    addFrame:ClearAllPoints()
+    addFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x + 10, y + 10)
+    addFrame:SetFrameLevel(frame:GetFrameLevel() + 50)
+
+    addFrame.input:SetText("")
+    addFrame:Show()
+    addFrame.input:SetFocus()
+end
+
+addBtn:SetScript("OnClick", function()
+    ShowPopup("add")
+end)
+
+removeBtn:SetScript("OnClick", function()
+    ShowPopup("remove")
+end)
+
+-- ==========================================================
+-- OK LOGIC (ADD / REMOVE)
+-- ==========================================================
+
+addFrame.ok:SetScript("OnClick", function()
+    local id = tonumber(addFrame.input:GetText())
+    if not id then return end
+
+    if popupMode == "add" then
+        -- === ADD ITEM ===
+        for _, it in ipairs(ItemTracker.Items) do
+            if it.itemID == id then
+                print("Item already exists")
+                return
+            end
+        end
+
+        local name = GetItemInfo(id)
+        if not name then
+            print("Item not cached yet. Open tooltip once.")
+            return
+        end
+
+        local newItem = { itemID = id, name = name }
+        table.insert(ItemTrackerDB.items, newItem)
+        table.insert(ItemTracker.Items, newItem)
+        table.insert(ItemTrackerDB.order, #ItemTracker.Items)
+
+    else
+        -- === REMOVE ITEM ===
+        local index
+
+        for i, it in ipairs(ItemTracker.Items) do
+            if it.itemID == id then
+                index = i
+                break
+            end
+        end
+
+        if not index then
+            print("Item not found")
+            return
+        end
+
+        -- remove from base
+        table.remove(ItemTracker.Items, index)
+
+        -- remove from saved items
+        for i = #ItemTrackerDB.items, 1, -1 do
+            if ItemTrackerDB.items[i].itemID == id then
+                table.remove(ItemTrackerDB.items, i)
+            end
+        end
+
+        -- remove order + fix indices
+        for i = #ItemTrackerDB.order, 1, -1 do
+            if ItemTrackerDB.order[i] == index then
+                table.remove(ItemTrackerDB.order, i)
+            elseif ItemTrackerDB.order[i] > index then
+                ItemTrackerDB.order[i] = ItemTrackerDB.order[i] - 1
+            end
+        end
+
+        ItemTrackerDB.notes[index] = nil
+        ItemTrackerDB.tiers[index] = nil
+    end
+
+    addFrame:Hide()
+    ItemTracker:BuildRows()
+    ItemTracker:Update()
+end)
+
+
+
+
+-- ==========================================================
+-- SCROLL
+-- ==========================================================
 
 local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
 scroll:SetPoint("TOPLEFT", 10, -40)
 scroll:SetPoint("BOTTOMRIGHT", -30, 10)
 
-local content = CreateFrame("Frame", nil, scroll)
+local content = CreateFrame("Frame", nil, frame)
 content:SetSize(480, 1)
 scroll:SetScrollChild(content)
+content:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -40)
+content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 10)
+
 
 -- ==========================================================
 -- DRAG GHOST
@@ -149,7 +387,7 @@ ghost.text = ghost:CreateFontString(nil,"OVERLAY","GameFontNormal")
 ghost.text:SetPoint("LEFT", ghost.icon, "RIGHT", 8, 0)
 
 -- ==========================================================
--- TIER DROPDOWN (CLASSIC SAFE)
+-- TIER DROPDOWN
 -- ==========================================================
 
 local TierDropDown = CreateFrame("Frame", "ItemTrackerTierDropDown", UIParent, "UIDropDownMenuTemplate")
@@ -187,7 +425,14 @@ end
 -- ==========================================================
 
 function ItemTracker:BuildRows()
+    for _, r in ipairs(self.rows) do
+        r:Hide()
+        r:SetParent(nil)
+    end
+
     wipe(self.rows)
+    
+
 
     for pos = 1, #ItemTrackerDB.order do
         local row = CreateFrame("Frame", nil, content)
@@ -250,13 +495,14 @@ function ItemTracker:BuildRows()
             local tier = ItemTrackerDB.tiers[index] or "—"
 
             ghost.icon:SetTexture(GetItemIcon(item.itemID))
-            ghost.text:SetText(item.name .. " | " .. count .. " | " .. tier)
+            ghost.text:SetText(item.name.." | "..count.." | "..tier)
             ghost:Show()
 
             ghost:SetScript("OnUpdate", function()
                 local x,y = GetCursorPosition()
                 local s = UIParent:GetEffectiveScale()
                 ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x/s + 14, y/s - 14)
+
                 for _, r in ipairs(ItemTracker.rows) do
                     local yy = y/s
                     if yy <= r:GetTop() and yy >= r:GetBottom() then
@@ -272,18 +518,24 @@ function ItemTracker:BuildRows()
             self:SetAlpha(1)
             ghost:Hide()
             ghost:SetScript("OnUpdate", nil)
-            for _, r in ipairs(ItemTracker.rows) do r.hl:Hide() end
+
+            for _, r in ipairs(ItemTracker.rows) do
+                r.hl:Hide()
+            end
 
             local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
             local target
+
             for _, r in ipairs(ItemTracker.rows) do
                 if y <= r:GetTop() and y >= r:GetBottom() then
                     target = r.pos
                 end
             end
+
             if target then
                 MoveIndex(ItemTrackerDB.order, self.dragFrom, target)
             end
+
             ItemTracker:Update()
         end)
 
@@ -299,7 +551,7 @@ function ItemTracker:Update()
     for pos, index in ipairs(ItemTrackerDB.order) do
         local row = self.rows[pos]
         local item = self.Items[index]
-        if row then
+        if row and item then
             local count = self:CountItem(item.itemID)
             local r,g,b = self:GetColor(count)
 
@@ -338,4 +590,4 @@ SlashCmdList.ITEMTRACKER = function()
     frame:SetShown(not frame:IsShown())
 end
 
-print("ItemTracker loaded (CLASSIC TIER MENU OK)")
+print("ItemTracker loaded (FULL ADD ITEM ID OK)")
