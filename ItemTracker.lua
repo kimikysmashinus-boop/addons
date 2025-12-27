@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker — Classic Era 1.15+
--- Drag-sort + Count + Color (FINAL WORKING)
+-- Insert Drag-sort + Count + Color (STABLE + UX)
 -- ==========================================================
 
 local addonName = ...
@@ -47,12 +47,10 @@ end
 function ItemTracker:CountItem(itemID)
     local total = 0
     for bag = 0,4 do
-        local slots = C_Container.GetContainerNumSlots(bag)
-        for slot = 1, slots do
-            local id = C_Container.GetContainerItemID(bag, slot)
-            if id == itemID then
+        for slot = 1, C_Container.GetContainerNumSlots(bag) do
+            if C_Container.GetContainerItemID(bag, slot) == itemID then
                 local info = C_Container.GetContainerItemInfo(bag, slot)
-                total = total + tonumber(info and info.stackCount or 1)
+                total = total + (info and info.stackCount or 1)
             end
         end
     end
@@ -67,23 +65,31 @@ local function InitDB()
     ItemTrackerDB = ItemTrackerDB or {}
     ItemTrackerDB.order = ItemTrackerDB.order or {}
 
-    local max = #ItemTracker.Items
     local used = {}
-
     for i = #ItemTrackerDB.order, 1, -1 do
-        local v = tonumber(ItemTrackerDB.order[i])
-        if not v or v < 1 or v > max or used[v] then
+        local v = ItemTrackerDB.order[i]
+        if not ItemTracker.Items[v] or used[v] then
             table.remove(ItemTrackerDB.order, i)
         else
             used[v] = true
         end
     end
 
-    for i = 1, max do
+    for i = 1, #ItemTracker.Items do
         if not used[i] then
             table.insert(ItemTrackerDB.order, i)
         end
     end
+end
+
+-- ==========================================================
+-- MOVE (INSERT LOGIC)
+-- ==========================================================
+
+local function MoveIndex(tbl, from, to)
+    if from == to then return end
+    local value = table.remove(tbl, from)
+    table.insert(tbl, to, value)
 end
 
 -- ==========================================================
@@ -99,8 +105,8 @@ frame:SetBackdrop({
     edgeSize = 14,
 })
 frame:SetBackdropColor(0,0,0,0.9)
-frame:EnableMouse(true)
 frame:SetMovable(true)
+frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetScript("OnDragStart", frame.StartMoving)
 frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
@@ -114,7 +120,7 @@ scroll:SetPoint("TOPLEFT", 10, -40)
 scroll:SetPoint("BOTTOMRIGHT", -30, 10)
 
 local content = CreateFrame("Frame", nil, scroll)
-content:SetSize(300, 1) -- <<< ВАЖНО
+content:SetSize(300, 1)
 scroll:SetScrollChild(content)
 
 local ROW_H = 34
@@ -130,8 +136,12 @@ function ItemTracker:BuildRows()
     for pos = 1, #ItemTrackerDB.order do
         local row = CreateFrame("Frame", nil, content)
         row:SetSize(300, ROW_H)
-        row:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(pos-1)*ROW_H)
+        row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
         row.pos = pos
+
+        row.bg = row:CreateTexture(nil,"BACKGROUND")
+        row.bg:SetAllPoints()
+        row.bg:SetColorTexture(1,1,1,0)
 
         row.icon = row:CreateTexture(nil,"ARTWORK")
         row.icon:SetSize(28,28)
@@ -145,22 +155,26 @@ function ItemTracker:BuildRows()
 
         row:SetScript("OnDragStart", function(self)
             self.dragFrom = self.pos
+            self:SetAlpha(0.5)
         end)
 
         row:SetScript("OnDragStop", function(self)
-            local y = select(2, self:GetCenter())
-            for _, other in ipairs(ItemTracker.rows) do
-                if other ~= self then
-                    local oy = select(2, other:GetCenter())
-                    if math.abs(y - oy) < ROW_H / 2 then
-                        ItemTrackerDB.order[self.dragFrom],
-                        ItemTrackerDB.order[other.pos] =
-                        ItemTrackerDB.order[other.pos],
-                        ItemTrackerDB.order[self.dragFrom]
-                        break
-                    end
+            self:SetAlpha(1)
+
+            local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
+            local target
+
+            for _, r in ipairs(ItemTracker.rows) do
+                r.bg:SetColorTexture(1,1,1,0)
+                if y <= r:GetTop() and y >= r:GetBottom() then
+                    target = r.pos
                 end
             end
+
+            if target then
+                MoveIndex(ItemTrackerDB.order, self.dragFrom, target)
+            end
+
             ItemTracker:Update()
         end)
 
@@ -174,14 +188,15 @@ end
 
 function ItemTracker:Update()
     for pos, index in ipairs(ItemTrackerDB.order) do
-        local item = self.Items[index]
         local row = self.rows[pos]
+        local item = self.Items[index]
 
-        if item and row then
+        if row and item then
             local count = self:CountItem(item.itemID)
             local r,g,b = self:GetColor(count)
 
             row.pos = pos
+            row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
             row.icon:SetTexture(GetItemIcon(item.itemID))
             row.text:SetText(item.name .. ": " .. count)
             row.text:SetTextColor(r,g,b)
@@ -198,7 +213,6 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("BAG_UPDATE_DELAYED")
-
 ev:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         InitDB()
@@ -216,4 +230,4 @@ SlashCmdList.ITEMTRACKER = function()
     frame:SetShown(not frame:IsShown())
 end
 
-print("ItemTracker loaded (FINAL)")
+print("ItemTracker loaded (INSERT DRAG STABLE)")
