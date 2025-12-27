@@ -33,14 +33,26 @@ ItemTracker.TIERS = { "S++", "S", "A", "B", "C" }
 -- COLOR
 -- ==========================================================
 
-function ItemTracker:GetColor(c)
-    c = tonumber(c) or 0
-    if c <= 4 then return 1,0,0
-    elseif c <= 19 then return 0.7,0.7,0.7
-    elseif c <= 34 then return 1,1,0
-    elseif c <= 40 then return 0,1,0
-    else return 1,0.4,0.7 end
+function ItemTracker:GetColor(count, itemID)
+    local t = ItemTrackerDB.colorThresholds[itemID]
+    local d = ItemTrackerDB.defaultThresholds
+
+    local gray   = (t and t.gray)   or d.gray
+    local yellow = (t and t.yellow) or d.yellow
+    local green  = (t and t.green)  or d.green
+
+    if count <= gray then
+        return 0.6, 0.6, 0.6      -- gray
+    elseif count <= yellow then
+        return 1, 1, 0            -- yellow
+    elseif count <= green then
+        return 0, 1, 0            -- green
+    else
+        return 1, 0, 0            -- 🔴 red (else)
+    end
 end
+
+
 
 -- ==========================================================
 -- COUNT
@@ -64,63 +76,69 @@ end
 -- ==========================================================
 
 local function InitDB()
-    -- === CREATE DB ===
+    -- ======================================================
+    -- CREATE ROOT
+    -- ======================================================
     ItemTrackerDB = ItemTrackerDB or {}
-    ItemTrackerDB.order = ItemTrackerDB.order or {}
-    ItemTrackerDB.notes = ItemTrackerDB.notes or {}
-    ItemTrackerDB.tiers = ItemTrackerDB.tiers or {}
-    ItemTrackerDB.items = ItemTrackerDB.items or {}
 
-    -- === SYNC SAVED ITEMS INTO BASE LIST ===
-    for _, savedItem in ipairs(ItemTrackerDB.items) do
-        local exists = false
-        for _, baseItem in ipairs(ItemTracker.Items) do
-            if baseItem.itemID == savedItem.itemID then
-                exists = true
+    ItemTrackerDB.items  = ItemTrackerDB.items  or {} -- добавленные вручную
+    ItemTrackerDB.order  = ItemTrackerDB.order  or {}
+    ItemTrackerDB.notes  = ItemTrackerDB.notes  or {}
+    ItemTrackerDB.tiers  = ItemTrackerDB.tiers  or {}
+
+    -- === COLOR THRESHOLDS (NEW) ===
+    ItemTrackerDB.colorThresholds = ItemTrackerDB.colorThresholds or {}
+    ItemTrackerDB.defaultThresholds = ItemTrackerDB.defaultThresholds or {
+        gray   = 5,
+        yellow = 19,
+        green  = 30,
+    }
+
+    -- ======================================================
+    -- MERGE SAVED ITEMS INTO BASE LIST
+    -- ======================================================
+    for _, saved in ipairs(ItemTrackerDB.items) do
+        local found = false
+        for _, base in ipairs(ItemTracker.Items) do
+            if base.itemID == saved.itemID then
+                found = true
                 break
             end
         end
 
-        if not exists then
-            table.insert(ItemTracker.Items, savedItem)
+        if not found then
+            table.insert(ItemTracker.Items, saved)
         end
     end
 
-    -- === FIX ORDER (REMOVE INVALID / DUPLICATES) ===
+    -- ======================================================
+    -- REBUILD ORDER SAFELY
+    -- ======================================================
     local used = {}
 
-for i = #ItemTrackerDB.order, 1, -1 do
-    local idx = ItemTrackerDB.order[i]
-    if type(idx) ~= "number" or idx < 1 or idx > #ItemTracker.Items or used[idx] then
-        table.remove(ItemTrackerDB.order, i)
-    else
-        used[idx] = true
+    -- remove invalid / duplicates
+    for i = #ItemTrackerDB.order, 1, -1 do
+        local idx = ItemTrackerDB.order[i]
+        if type(idx) ~= "number"
+            or idx < 1
+            or idx > #ItemTracker.Items
+            or used[idx]
+        then
+            table.remove(ItemTrackerDB.order, i)
+        else
+            used[idx] = true
+        end
     end
-end
 
-for i = 1, #ItemTracker.Items do
-    if not used[i] then
-        table.insert(ItemTrackerDB.order, i)
-    end
-end
-
-
-    -- === ADD MISSING ITEMS TO ORDER ===
+    -- add missing indices
     for i = 1, #ItemTracker.Items do
         if not used[i] then
             table.insert(ItemTrackerDB.order, i)
+            used[i] = true
         end
     end
 end
 
-local function MoveIndex(t, from, to)
-    if not t or from == to then return end
-    if from < 1 or to < 1 then return end
-    if from > #t or to > #t then return end
-
-    local v = table.remove(t, from)
-    table.insert(t, to, v)
-end
 
 
 
@@ -389,6 +407,71 @@ ghost.text:SetPoint("LEFT", ghost.icon, "RIGHT", 8, 0)
 -- ==========================================================
 -- TIER DROPDOWN
 -- ==========================================================
+local thresholdFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+thresholdFrame:SetSize(220, 110)
+thresholdFrame:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    edgeSize = 12,
+})
+thresholdFrame:SetBackdropColor(0,0,0,0.95)
+thresholdFrame:SetFrameStrata("DIALOG")
+thresholdFrame:Hide()
+
+thresholdFrame.inputs = {}
+
+local labels = {
+    { key="gray",   text="Gray ≤"   },
+    { key="yellow", text="Yellow ≤" },
+    { key="green",  text="Green ≤"  },
+}
+
+for i, l in ipairs(labels) do
+    local y = -10 - (i-1)*30
+
+    local fs = thresholdFrame:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+    fs:SetPoint("TOPLEFT", 10, y)
+    fs:SetText(l.text)
+
+    local eb = CreateFrame("EditBox", nil, thresholdFrame, "InputBoxTemplate")
+    eb:SetSize(40, 20)
+    eb:SetPoint("LEFT", fs, "RIGHT", 6, 0)
+    eb:SetNumeric(true)
+    eb:SetAutoFocus(false)
+
+    thresholdFrame.inputs[l.key] = eb
+end
+
+thresholdFrame.ok = CreateFrame("Button", nil, thresholdFrame, "UIPanelButtonTemplate")
+thresholdFrame.ok:SetSize(60,20)
+thresholdFrame.ok:SetPoint("BOTTOM", 0, 8)
+thresholdFrame.ok:SetText("OK")
+thresholdFrame.ok:SetScript("OnClick", function()
+    local itemID = thresholdFrame.itemID
+    if not itemID then
+        thresholdFrame:Hide()
+        return
+    end
+
+    ItemTrackerDB.colorThresholds[itemID] = {
+        gray   = tonumber(thresholdFrame.inputs.gray:GetText())   or ItemTrackerDB.defaultThresholds.gray,
+        yellow = tonumber(thresholdFrame.inputs.yellow:GetText()) or ItemTrackerDB.defaultThresholds.yellow,
+        green  = tonumber(thresholdFrame.inputs.green:GetText())  or ItemTrackerDB.defaultThresholds.green,
+    }
+
+    thresholdFrame:Hide()
+    ItemTracker:Update()
+end)
+
+thresholdFrame:SetScript("OnKeyDown", function(self, key)
+    if key == "ESCAPE" then
+        self:Hide()
+    end
+end)
+thresholdFrame:SetPropagateKeyboardInput(true)
+thresholdFrame:EnableKeyboard(true)
+
+
 
 local TierDropDown = CreateFrame("Frame", "ItemTrackerTierDropDown", UIParent, "UIDropDownMenuTemplate")
 TierDropDown.displayMode = "MENU"
@@ -420,19 +503,44 @@ TierDropDown.initialize = function(self)
     })
 end
 
+function ItemTracker:ShowThresholdPopup(itemID)
+    thresholdFrame.itemID = itemID
+
+    local t = ItemTrackerDB.colorThresholds[itemID]
+    local d = ItemTrackerDB.defaultThresholds
+
+    thresholdFrame.inputs.gray:SetText( (t and t.gray) or d.gray )
+    thresholdFrame.inputs.yellow:SetText( (t and t.yellow) or d.yellow )
+    thresholdFrame.inputs.green:SetText( (t and t.green) or d.green )
+
+    thresholdFrame:ClearAllPoints()
+    thresholdFrame:SetPoint("CENTER")
+    thresholdFrame:Show()
+end
+
+
 -- ==========================================================
--- BUILD ROWS
+-- MOVE INDEX (DRAG SORT HELPER)
 -- ==========================================================
+
+local function MoveIndex(tbl, from, to)
+    if not tbl then return end
+    if from == to then return end
+    if from < 1 or from > #tbl then return end
+    if to   < 1 or to   > #tbl then return end
+
+    local value = table.remove(tbl, from)
+    table.insert(tbl, to, value)
+end
+
+
 
 function ItemTracker:BuildRows()
     for _, r in ipairs(self.rows) do
         r:Hide()
         r:SetParent(nil)
     end
-
     wipe(self.rows)
-    
-
 
     for pos = 1, #ItemTrackerDB.order do
         local row = CreateFrame("Frame", nil, content)
@@ -440,23 +548,38 @@ function ItemTracker:BuildRows()
         row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
         row.pos = pos
 
+        -- =============================
+        -- HIGHLIGHT
+        -- =============================
         row.hl = row:CreateTexture(nil,"BACKGROUND")
         row.hl:SetAllPoints()
         row.hl:SetColorTexture(1,1,1,0.15)
         row.hl:Hide()
 
+        -- =============================
+        -- ICON
+        -- =============================
         row.icon = row:CreateTexture(nil,"ARTWORK")
         row.icon:SetSize(28,28)
         row.icon:SetPoint("LEFT")
 
+        -- =============================
+        -- NAME
+        -- =============================
         row.name = row:CreateFontString(nil,"OVERLAY","GameFontNormal")
         row.name:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
-        row.name:SetWidth(210)
+        row.name:SetWidth(200)
 
+        -- =============================
+        -- COUNT
+        -- =============================
         row.count = row:CreateFontString(nil,"OVERLAY","GameFontHighlight")
         row.count:SetPoint("LEFT", row.name, "RIGHT", 6, 0)
-        row.count:SetWidth(40)
+        row.count:SetWidth(36)
 
+        -- =============================
+        -- TIER BUTTON
+        -- =============================
         row.tier = CreateFrame("Button", nil, row, "BackdropTemplate")
         row.tier:SetSize(36, 20)
         row.tier:SetPoint("LEFT", row.count, "RIGHT", 6, 0)
@@ -471,17 +594,38 @@ function ItemTracker:BuildRows()
             ToggleDropDownMenu(1, nil, TierDropDown, "cursor", 0, 0)
         end)
 
+        -- =============================
+        -- ⚙️ CONFIG BUTTON (NEW)
+        -- =============================
+        row.cfg = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+        row.cfg:SetSize(20, 20)
+        row.cfg:SetPoint("LEFT", row.tier, "RIGHT", 4, 0)
+        row.cfg:SetText("⚙")
+
+        row.cfg:SetScript("OnClick", function()
+            local index = ItemTrackerDB.order[row.pos]
+            local itemID = ItemTracker.Items[index].itemID
+            ItemTracker:ShowThresholdPopup(itemID)
+        end)
+
+        -- =============================
+        -- NOTE
+        -- =============================
         row.note = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
         row.note:SetSize(40, 20)
-        row.note:SetPoint("RIGHT", -10, 0)
+        row.note:SetPoint("LEFT", row.cfg, "RIGHT", 6, 0)
         row.note:SetAutoFocus(false)
         row.note:SetFontObject(GameFontHighlightSmall)
+
         row.note:SetScript("OnEnterPressed", row.note.ClearFocus)
         row.note:SetScript("OnEscapePressed", row.note.ClearFocus)
         row.note:SetScript("OnEditFocusLost", function(self)
             ItemTrackerDB.notes[ ItemTrackerDB.order[row.pos] ] = self:GetText()
         end)
 
+        -- =============================
+        -- DRAG
+        -- =============================
         row:EnableMouse(true)
         row:RegisterForDrag("LeftButton")
 
@@ -490,9 +634,9 @@ function ItemTracker:BuildRows()
             self:SetAlpha(0.4)
 
             local index = ItemTrackerDB.order[self.pos]
-            local item = ItemTracker.Items[index]
+            local item  = ItemTracker.Items[index]
             local count = ItemTracker:CountItem(item.itemID)
-            local tier = ItemTrackerDB.tiers[index] or "—"
+            local tier  = ItemTrackerDB.tiers[index] or "—"
 
             ghost.icon:SetTexture(GetItemIcon(item.itemID))
             ghost.text:SetText(item.name.." | "..count.." | "..tier)
@@ -549,26 +693,35 @@ end
 
 function ItemTracker:Update()
     for pos, index in ipairs(ItemTrackerDB.order) do
-        local row = self.rows[pos]
+        local row  = self.rows[pos]
         local item = self.Items[index]
+
         if row and item then
             local count = self:CountItem(item.itemID)
-            local r,g,b = self:GetColor(count)
+
+            -- ⚠️ ВАЖНО: передаём itemID
+            local r, g, b = self:GetColor(count, item.itemID)
 
             row.pos = pos
-            row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
+            row:SetPoint("TOPLEFT", 0, -(pos - 1) * ROW_H)
+
             row.icon:SetTexture(GetItemIcon(item.itemID))
             row.name:SetText(item.name)
-            row.name:SetTextColor(r,g,b)
+            row.name:SetTextColor(r, g, b)
+
             row.count:SetText(count)
-            row.count:SetTextColor(r,g,b)
+            row.count:SetTextColor(r, g, b)
+
             row.tier.text:SetText(ItemTrackerDB.tiers[index] or "—")
             row.note:SetText(ItemTrackerDB.notes[index] or "")
+
             row:Show()
         end
     end
+
     content:SetHeight(#ItemTrackerDB.order * ROW_H)
 end
+
 
 -- ==========================================================
 -- EVENTS
