@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker — Classic Era 1.15+
--- Drag-sort + Count + Color + Drag Ghost + Notes + Avg Price
+-- Drag-sort + Count + Color + Drag Ghost + Notes + Highlight
 -- ==========================================================
 
 local addonName = ...
@@ -150,6 +150,27 @@ ghost.text = ghost:CreateFontString(nil,"OVERLAY","GameFontNormal")
 ghost.text:SetPoint("LEFT", ghost.icon, "RIGHT", 8, 0)
 
 -- ==========================================================
+-- HIGHLIGHT HELPERS
+-- ==========================================================
+
+local function ClearHighlights()
+    for _, r in ipairs(ItemTracker.rows) do
+        r.hl:Hide()
+    end
+end
+
+local function HighlightRowAtCursor()
+    local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
+    for _, r in ipairs(ItemTracker.rows) do
+        if y <= r:GetTop() and y >= r:GetBottom() then
+            r.hl:Show()
+        else
+            r.hl:Hide()
+        end
+    end
+end
+
+-- ==========================================================
 -- BUILD ROWS
 -- ==========================================================
 
@@ -162,6 +183,11 @@ function ItemTracker:BuildRows()
         row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
         row.pos = pos
 
+        row.hl = row:CreateTexture(nil, "BACKGROUND")
+        row.hl:SetAllPoints()
+        row.hl:SetColorTexture(1,1,1,0.15)
+        row.hl:Hide()
+
         row.icon = row:CreateTexture(nil,"ARTWORK")
         row.icon:SetSize(28,28)
         row.icon:SetPoint("LEFT")
@@ -169,56 +195,16 @@ function ItemTracker:BuildRows()
         row.text = row:CreateFontString(nil,"OVERLAY","GameFontNormal")
         row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
 
-        -- NOTE (avg price result)
         row.note = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-        row.note:SetSize(60, 20)
+        row.note:SetSize(40, 20)
         row.note:SetPoint("RIGHT", -100, 0)
         row.note:SetAutoFocus(false)
         row.note:SetFontObject(GameFontHighlightSmall)
-
         row.note:SetScript("OnEnterPressed", row.note.ClearFocus)
         row.note:SetScript("OnEscapePressed", row.note.ClearFocus)
         row.note:SetScript("OnEditFocusLost", function(self)
             local index = ItemTrackerDB.order[row.pos]
             ItemTrackerDB.notes[index] = self:GetText()
-        end)
-
-        -- INPUT qty price
-        row.calc = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
-        row.calc:SetSize(80, 20)
-        row.calc:SetPoint("RIGHT", -10, 0)
-        row.calc:SetAutoFocus(false)
-        row.calc:SetFontObject(GameFontHighlightSmall)
-
-        row.calc.hint = row.calc:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
-        row.calc.hint:SetPoint("LEFT", 6, 0)
-        row.calc.hint:SetText("qty price")
-
-        row.calc:SetScript("OnEditFocusGained", function(self)
-            self.hint:Hide()
-        end)
-
-        row.calc:SetScript("OnEditFocusLost", function(self)
-            if self:GetText() == "" then
-                self.hint:Show()
-            end
-        end)
-
-        row.calc:SetScript("OnEnterPressed", function(self)
-            local qty, price = self:GetText():match("^(%d+)%s+(%d+)$")
-            qty, price = tonumber(qty), tonumber(price)
-
-            if qty and price and qty > 0 then
-                local avg = math.floor((price / qty) * 100) / 100
-                row.note:SetText(avg)
-
-                local index = ItemTrackerDB.order[row.pos]
-                ItemTrackerDB.notes[index] = tostring(avg)
-            end
-
-            self:SetText("")
-            self.hint:Show()
-            self:ClearFocus()
         end)
 
         row:EnableMouse(true)
@@ -240,6 +226,7 @@ function ItemTracker:BuildRows()
                 local x,y = GetCursorPosition()
                 local s = UIParent:GetEffectiveScale()
                 ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x/s + 14, y/s - 14)
+                HighlightRowAtCursor()
             end)
         end)
 
@@ -247,6 +234,7 @@ function ItemTracker:BuildRows()
             self:SetAlpha(1)
             ghost:Hide()
             ghost:SetScript("OnUpdate", nil)
+            ClearHighlights()
 
             local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
             local target
@@ -316,4 +304,4 @@ SlashCmdList.ITEMTRACKER = function()
     frame:SetShown(not frame:IsShown())
 end
 
-print("ItemTracker loaded (AVG PRICE READY)")
+print("ItemTracker loaded (DRAG HIGHLIGHT READY)")
