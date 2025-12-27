@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker — Classic Era 1.15+
--- Insert Drag-sort + Count + Color (STABLE + UX)
+-- Drag-sort + Count + Color + Drag Ghost + Notes + Avg Price
 -- ==========================================================
 
 local addonName = ...
@@ -64,6 +64,7 @@ end
 local function InitDB()
     ItemTrackerDB = ItemTrackerDB or {}
     ItemTrackerDB.order = ItemTrackerDB.order or {}
+    ItemTrackerDB.notes = ItemTrackerDB.notes or {}
 
     local used = {}
     for i = #ItemTrackerDB.order, 1, -1 do
@@ -83,21 +84,21 @@ local function InitDB()
 end
 
 -- ==========================================================
--- MOVE (INSERT LOGIC)
+-- MOVE
 -- ==========================================================
 
 local function MoveIndex(tbl, from, to)
     if from == to then return end
-    local value = table.remove(tbl, from)
-    table.insert(tbl, to, value)
+    local v = table.remove(tbl, from)
+    table.insert(tbl, to, v)
 end
 
 -- ==========================================================
--- UI
+-- UI FRAME
 -- ==========================================================
 
 local frame = CreateFrame("Frame", "ItemTrackerFrame", UIParent, "BackdropTemplate")
-frame:SetSize(360, 460)
+frame:SetSize(460, 460)
 frame:SetPoint("CENTER")
 frame:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -120,11 +121,33 @@ scroll:SetPoint("TOPLEFT", 10, -40)
 scroll:SetPoint("BOTTOMRIGHT", -30, 10)
 
 local content = CreateFrame("Frame", nil, scroll)
-content:SetSize(300, 1)
+content:SetSize(420, 1)
 scroll:SetScrollChild(content)
 
 local ROW_H = 34
 ItemTracker.rows = {}
+
+-- ==========================================================
+-- DRAG GHOST
+-- ==========================================================
+
+local ghost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+ghost:SetSize(260, 32)
+ghost:SetBackdrop({
+    bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    edgeSize = 12,
+})
+ghost:SetBackdropColor(0,0,0,0.95)
+ghost:SetFrameStrata("TOOLTIP")
+ghost:Hide()
+
+ghost.icon = ghost:CreateTexture(nil,"ARTWORK")
+ghost.icon:SetSize(26,26)
+ghost.icon:SetPoint("LEFT", 4, 0)
+
+ghost.text = ghost:CreateFontString(nil,"OVERLAY","GameFontNormal")
+ghost.text:SetPoint("LEFT", ghost.icon, "RIGHT", 8, 0)
 
 -- ==========================================================
 -- BUILD ROWS
@@ -135,13 +158,9 @@ function ItemTracker:BuildRows()
 
     for pos = 1, #ItemTrackerDB.order do
         local row = CreateFrame("Frame", nil, content)
-        row:SetSize(300, ROW_H)
+        row:SetSize(420, ROW_H)
         row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
         row.pos = pos
-
-        row.bg = row:CreateTexture(nil,"BACKGROUND")
-        row.bg:SetAllPoints()
-        row.bg:SetColorTexture(1,1,1,0)
 
         row.icon = row:CreateTexture(nil,"ARTWORK")
         row.icon:SetSize(28,28)
@@ -150,22 +169,89 @@ function ItemTracker:BuildRows()
         row.text = row:CreateFontString(nil,"OVERLAY","GameFontNormal")
         row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
 
+        -- NOTE (avg price result)
+        row.note = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+        row.note:SetSize(60, 20)
+        row.note:SetPoint("RIGHT", -100, 0)
+        row.note:SetAutoFocus(false)
+        row.note:SetFontObject(GameFontHighlightSmall)
+
+        row.note:SetScript("OnEnterPressed", row.note.ClearFocus)
+        row.note:SetScript("OnEscapePressed", row.note.ClearFocus)
+        row.note:SetScript("OnEditFocusLost", function(self)
+            local index = ItemTrackerDB.order[row.pos]
+            ItemTrackerDB.notes[index] = self:GetText()
+        end)
+
+        -- INPUT qty price
+        row.calc = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+        row.calc:SetSize(80, 20)
+        row.calc:SetPoint("RIGHT", -10, 0)
+        row.calc:SetAutoFocus(false)
+        row.calc:SetFontObject(GameFontHighlightSmall)
+
+        row.calc.hint = row.calc:CreateFontString(nil,"OVERLAY","GameFontDisableSmall")
+        row.calc.hint:SetPoint("LEFT", 6, 0)
+        row.calc.hint:SetText("qty price")
+
+        row.calc:SetScript("OnEditFocusGained", function(self)
+            self.hint:Hide()
+        end)
+
+        row.calc:SetScript("OnEditFocusLost", function(self)
+            if self:GetText() == "" then
+                self.hint:Show()
+            end
+        end)
+
+        row.calc:SetScript("OnEnterPressed", function(self)
+            local qty, price = self:GetText():match("^(%d+)%s+(%d+)$")
+            qty, price = tonumber(qty), tonumber(price)
+
+            if qty and price and qty > 0 then
+                local avg = math.floor((price / qty) * 100) / 100
+                row.note:SetText(avg)
+
+                local index = ItemTrackerDB.order[row.pos]
+                ItemTrackerDB.notes[index] = tostring(avg)
+            end
+
+            self:SetText("")
+            self.hint:Show()
+            self:ClearFocus()
+        end)
+
         row:EnableMouse(true)
         row:RegisterForDrag("LeftButton")
 
         row:SetScript("OnDragStart", function(self)
             self.dragFrom = self.pos
-            self:SetAlpha(0.5)
+            self:SetAlpha(0.4)
+
+            local index = ItemTrackerDB.order[self.pos]
+            local item = ItemTracker.Items[index]
+            local count = ItemTracker:CountItem(item.itemID)
+
+            ghost.icon:SetTexture(GetItemIcon(item.itemID))
+            ghost.text:SetText(item.name .. ": " .. count)
+            ghost:Show()
+
+            ghost:SetScript("OnUpdate", function()
+                local x,y = GetCursorPosition()
+                local s = UIParent:GetEffectiveScale()
+                ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x/s + 14, y/s - 14)
+            end)
         end)
 
         row:SetScript("OnDragStop", function(self)
             self:SetAlpha(1)
+            ghost:Hide()
+            ghost:SetScript("OnUpdate", nil)
 
             local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
             local target
 
             for _, r in ipairs(ItemTracker.rows) do
-                r.bg:SetColorTexture(1,1,1,0)
                 if y <= r:GetTop() and y >= r:GetBottom() then
                     target = r.pos
                 end
@@ -190,7 +276,6 @@ function ItemTracker:Update()
     for pos, index in ipairs(ItemTrackerDB.order) do
         local row = self.rows[pos]
         local item = self.Items[index]
-
         if row and item then
             local count = self:CountItem(item.itemID)
             local r,g,b = self:GetColor(count)
@@ -200,6 +285,7 @@ function ItemTracker:Update()
             row.icon:SetTexture(GetItemIcon(item.itemID))
             row.text:SetText(item.name .. ": " .. count)
             row.text:SetTextColor(r,g,b)
+            row.note:SetText(ItemTrackerDB.notes[index] or "")
             row:Show()
         end
     end
@@ -230,4 +316,4 @@ SlashCmdList.ITEMTRACKER = function()
     frame:SetShown(not frame:IsShown())
 end
 
-print("ItemTracker loaded (INSERT DRAG STABLE)")
+print("ItemTracker loaded (AVG PRICE READY)")
