@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker — Classic Era 1.15+
--- Drag-sort + Count + Color + Drag Ghost + Notes + Highlight
+-- Drag-sort + Count Column + Tier Menu + Color + Ghost + Notes
 -- ==========================================================
 
 local addonName = ...
@@ -27,16 +27,18 @@ ItemTracker.Items = {
     { itemID = 3826,  name = "Mighty Troll's Blood Potion" },
 }
 
+ItemTracker.TIERS = { "S++", "S", "A", "B", "C" }
+
 -- ==========================================================
 -- COLOR
 -- ==========================================================
 
-function ItemTracker:GetColor(count)
-    count = tonumber(count) or 0
-    if count <= 4 then return 1,0,0
-    elseif count <= 19 then return 0.7,0.7,0.7
-    elseif count <= 34 then return 1,1,0
-    elseif count <= 40 then return 0,1,0
+function ItemTracker:GetColor(c)
+    c = tonumber(c) or 0
+    if c <= 4 then return 1,0,0
+    elseif c <= 19 then return 0.7,0.7,0.7
+    elseif c <= 34 then return 1,1,0
+    elseif c <= 40 then return 0,1,0
     else return 1,0.4,0.7 end
 end
 
@@ -44,11 +46,11 @@ end
 -- COUNT
 -- ==========================================================
 
-function ItemTracker:CountItem(itemID)
+function ItemTracker:CountItem(id)
     local total = 0
     for bag = 0,4 do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
-            if C_Container.GetContainerItemID(bag, slot) == itemID then
+            if C_Container.GetContainerItemID(bag, slot) == id then
                 local info = C_Container.GetContainerItemInfo(bag, slot)
                 total = total + (info and info.stackCount or 1)
             end
@@ -65,6 +67,7 @@ local function InitDB()
     ItemTrackerDB = ItemTrackerDB or {}
     ItemTrackerDB.order = ItemTrackerDB.order or {}
     ItemTrackerDB.notes = ItemTrackerDB.notes or {}
+    ItemTrackerDB.tiers = ItemTrackerDB.tiers or {}
 
     local used = {}
     for i = #ItemTrackerDB.order, 1, -1 do
@@ -83,22 +86,21 @@ local function InitDB()
     end
 end
 
--- ==========================================================
--- MOVE
--- ==========================================================
-
-local function MoveIndex(tbl, from, to)
+local function MoveIndex(t, from, to)
     if from == to then return end
-    local v = table.remove(tbl, from)
-    table.insert(tbl, to, v)
+    local v = table.remove(t, from)
+    table.insert(t, to, v)
 end
 
 -- ==========================================================
--- UI FRAME
+-- UI
 -- ==========================================================
 
+local ROW_H = 34
+ItemTracker.rows = {}
+
 local frame = CreateFrame("Frame", "ItemTrackerFrame", UIParent, "BackdropTemplate")
-frame:SetSize(460, 460)
+frame:SetSize(520, 460)
 frame:SetPoint("CENTER")
 frame:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -121,18 +123,15 @@ scroll:SetPoint("TOPLEFT", 10, -40)
 scroll:SetPoint("BOTTOMRIGHT", -30, 10)
 
 local content = CreateFrame("Frame", nil, scroll)
-content:SetSize(420, 1)
+content:SetSize(480, 1)
 scroll:SetScrollChild(content)
-
-local ROW_H = 34
-ItemTracker.rows = {}
 
 -- ==========================================================
 -- DRAG GHOST
 -- ==========================================================
 
 local ghost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-ghost:SetSize(260, 32)
+ghost:SetSize(300, 32)
 ghost:SetBackdrop({
     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
     edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -150,24 +149,37 @@ ghost.text = ghost:CreateFontString(nil,"OVERLAY","GameFontNormal")
 ghost.text:SetPoint("LEFT", ghost.icon, "RIGHT", 8, 0)
 
 -- ==========================================================
--- HIGHLIGHT HELPERS
+-- TIER DROPDOWN (CLASSIC SAFE)
 -- ==========================================================
 
-local function ClearHighlights()
-    for _, r in ipairs(ItemTracker.rows) do
-        r.hl:Hide()
-    end
-end
+local TierDropDown = CreateFrame("Frame", "ItemTrackerTierDropDown", UIParent, "UIDropDownMenuTemplate")
+TierDropDown.displayMode = "MENU"
 
-local function HighlightRowAtCursor()
-    local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
-    for _, r in ipairs(ItemTracker.rows) do
-        if y <= r:GetTop() and y >= r:GetBottom() then
-            r.hl:Show()
-        else
-            r.hl:Hide()
-        end
+TierDropDown.initialize = function(self)
+    local index = self.itemIndex
+    if not index then return end
+
+    for _, tier in ipairs(ItemTracker.TIERS) do
+        UIDropDownMenu_AddButton({
+            text = tier,
+            notCheckable = true,
+            func = function()
+                ItemTrackerDB.tiers[index] = tier
+                CloseDropDownMenus()
+                ItemTracker:Update()
+            end
+        })
     end
+
+    UIDropDownMenu_AddButton({
+        text = "Clear",
+        notCheckable = true,
+        func = function()
+            ItemTrackerDB.tiers[index] = nil
+            CloseDropDownMenus()
+            ItemTracker:Update()
+        end
+    })
 end
 
 -- ==========================================================
@@ -179,11 +191,11 @@ function ItemTracker:BuildRows()
 
     for pos = 1, #ItemTrackerDB.order do
         local row = CreateFrame("Frame", nil, content)
-        row:SetSize(420, ROW_H)
+        row:SetSize(480, ROW_H)
         row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
         row.pos = pos
 
-        row.hl = row:CreateTexture(nil, "BACKGROUND")
+        row.hl = row:CreateTexture(nil,"BACKGROUND")
         row.hl:SetAllPoints()
         row.hl:SetColorTexture(1,1,1,0.15)
         row.hl:Hide()
@@ -192,19 +204,37 @@ function ItemTracker:BuildRows()
         row.icon:SetSize(28,28)
         row.icon:SetPoint("LEFT")
 
-        row.text = row:CreateFontString(nil,"OVERLAY","GameFontNormal")
-        row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
+        row.name = row:CreateFontString(nil,"OVERLAY","GameFontNormal")
+        row.name:SetPoint("LEFT", row.icon, "RIGHT", 8, 0)
+        row.name:SetWidth(210)
+
+        row.count = row:CreateFontString(nil,"OVERLAY","GameFontHighlight")
+        row.count:SetPoint("LEFT", row.name, "RIGHT", 6, 0)
+        row.count:SetWidth(40)
+
+        row.tier = CreateFrame("Button", nil, row, "BackdropTemplate")
+        row.tier:SetSize(36, 20)
+        row.tier:SetPoint("LEFT", row.count, "RIGHT", 6, 0)
+        row.tier:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background" })
+        row.tier:SetBackdropColor(0,0,0,0.8)
+
+        row.tier.text = row.tier:CreateFontString(nil,"OVERLAY","GameFontHighlightSmall")
+        row.tier.text:SetPoint("CENTER")
+
+        row.tier:SetScript("OnMouseUp", function()
+            TierDropDown.itemIndex = ItemTrackerDB.order[row.pos]
+            ToggleDropDownMenu(1, nil, TierDropDown, "cursor", 0, 0)
+        end)
 
         row.note = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
         row.note:SetSize(40, 20)
-        row.note:SetPoint("RIGHT", -100, 0)
+        row.note:SetPoint("RIGHT", -10, 0)
         row.note:SetAutoFocus(false)
         row.note:SetFontObject(GameFontHighlightSmall)
         row.note:SetScript("OnEnterPressed", row.note.ClearFocus)
         row.note:SetScript("OnEscapePressed", row.note.ClearFocus)
         row.note:SetScript("OnEditFocusLost", function(self)
-            local index = ItemTrackerDB.order[row.pos]
-            ItemTrackerDB.notes[index] = self:GetText()
+            ItemTrackerDB.notes[ ItemTrackerDB.order[row.pos] ] = self:GetText()
         end)
 
         row:EnableMouse(true)
@@ -217,16 +247,24 @@ function ItemTracker:BuildRows()
             local index = ItemTrackerDB.order[self.pos]
             local item = ItemTracker.Items[index]
             local count = ItemTracker:CountItem(item.itemID)
+            local tier = ItemTrackerDB.tiers[index] or "—"
 
             ghost.icon:SetTexture(GetItemIcon(item.itemID))
-            ghost.text:SetText(item.name .. ": " .. count)
+            ghost.text:SetText(item.name .. " | " .. count .. " | " .. tier)
             ghost:Show()
 
             ghost:SetScript("OnUpdate", function()
                 local x,y = GetCursorPosition()
                 local s = UIParent:GetEffectiveScale()
                 ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", x/s + 14, y/s - 14)
-                HighlightRowAtCursor()
+                for _, r in ipairs(ItemTracker.rows) do
+                    local yy = y/s
+                    if yy <= r:GetTop() and yy >= r:GetBottom() then
+                        r.hl:Show()
+                    else
+                        r.hl:Hide()
+                    end
+                end
             end)
         end)
 
@@ -234,21 +272,18 @@ function ItemTracker:BuildRows()
             self:SetAlpha(1)
             ghost:Hide()
             ghost:SetScript("OnUpdate", nil)
-            ClearHighlights()
+            for _, r in ipairs(ItemTracker.rows) do r.hl:Hide() end
 
             local y = select(2, GetCursorPosition()) / UIParent:GetEffectiveScale()
             local target
-
             for _, r in ipairs(ItemTracker.rows) do
                 if y <= r:GetTop() and y >= r:GetBottom() then
                     target = r.pos
                 end
             end
-
             if target then
                 MoveIndex(ItemTrackerDB.order, self.dragFrom, target)
             end
-
             ItemTracker:Update()
         end)
 
@@ -264,15 +299,18 @@ function ItemTracker:Update()
     for pos, index in ipairs(ItemTrackerDB.order) do
         local row = self.rows[pos]
         local item = self.Items[index]
-        if row and item then
+        if row then
             local count = self:CountItem(item.itemID)
             local r,g,b = self:GetColor(count)
 
             row.pos = pos
             row:SetPoint("TOPLEFT", 0, -(pos-1)*ROW_H)
             row.icon:SetTexture(GetItemIcon(item.itemID))
-            row.text:SetText(item.name .. ": " .. count)
-            row.text:SetTextColor(r,g,b)
+            row.name:SetText(item.name)
+            row.name:SetTextColor(r,g,b)
+            row.count:SetText(count)
+            row.count:SetTextColor(r,g,b)
+            row.tier.text:SetText(ItemTrackerDB.tiers[index] or "—")
             row.note:SetText(ItemTrackerDB.notes[index] or "")
             row:Show()
         end
@@ -287,21 +325,17 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("PLAYER_LOGIN")
 ev:RegisterEvent("BAG_UPDATE_DELAYED")
-ev:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then
+ev:SetScript("OnEvent", function(_, e)
+    if e == "PLAYER_LOGIN" then
         InitDB()
         ItemTracker:BuildRows()
     end
     ItemTracker:Update()
 end)
 
--- ==========================================================
--- SLASH
--- ==========================================================
-
 SLASH_ITEMTRACKER1 = "/it"
 SlashCmdList.ITEMTRACKER = function()
     frame:SetShown(not frame:IsShown())
 end
 
-print("ItemTracker loaded (DRAG HIGHLIGHT READY)")
+print("ItemTracker loaded (CLASSIC TIER MENU OK)")
