@@ -1,14 +1,11 @@
 ## Interface: 11500
 ## Title: ItemTracker
-## Notes: Track consumables with color thresholds
-## Author: KimiBoss
-## Version: 0.1
+## Notes: Item tracking addon
 ## SavedVariables: ItemTrackerDB
 
 ItemTracker.lua
 Data.lua
 Utils.lua
 UI_Main.lua
-MinimapButton.lua
-UI_AutoRed.lua
-UI_Autogray.lua
+UI_Auto.lua
+Minimap.lua

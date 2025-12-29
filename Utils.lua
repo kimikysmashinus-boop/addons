@@ -3,18 +3,17 @@
 local addonName = ...
 local ItemTracker = _G[addonName]
 
-function ItemTracker:CountItem(id)
-    local total = 0
-    for bag = 0,4 do
-        for slot = 1, C_Container.GetContainerNumSlots(bag) do
-            if C_Container.GetContainerItemID(bag, slot) == id then
-                local info = C_Container.GetContainerItemInfo(bag, slot)
-                total = total + (info and info.stackCount or 1)
-            end
-        end
-    end
-    return total
+function ItemTracker:CountItem(itemID)
+    local bags = GetItemCount(itemID, false)
+    local bank = GetItemCount(itemID, true) - bags
+    local auction = self.auctionCache[itemID] or 0
+   
+
+
+    return bags + bank + auction
 end
+
+
 
 function ItemTracker:GetColor(count, itemID)
     local t = ItemTrackerDB.colorThresholds[itemID]
@@ -35,3 +34,5 @@ function ItemTracker:MoveIndex(tbl, from, to)
     local v = table.remove(tbl, from)
     table.insert(tbl, to, v)
 end
+
+

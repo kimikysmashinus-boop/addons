@@ -4,27 +4,57 @@
 -- ==========================================================
 
 local addonName = ...
-local ItemTracker = {}
+local ItemTracker = _G[addonName] or {}
 _G[addonName] = ItemTracker
 
 -- ==========================================================
--- ADDON LOADED
+-- ADDON LOADER
 -- ==========================================================
 
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
+loader:RegisterEvent("PLAYER_LOGIN")
+loader:RegisterEvent("BAG_UPDATE_DELAYED")
+loader:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 
-loader:SetScript("OnEvent", function(_, _, name)
-    if name ~= addonName then return end
+loader:SetScript("OnEvent", function(_, event, arg)
+    -- === ADDON LOADED (DB only)
+    if event == "ADDON_LOADED" then
+        if arg ~= addonName then return end
 
-    -- Init SavedVariables & data
-    if ItemTracker.InitDB then
-        ItemTracker:InitDB()
+        if ItemTracker.InitDB then
+            ItemTracker:InitDB()
+        end
+        return
     end
 
-    -- Build main (green) UI
-    if ItemTracker.BuildMainUI then
-        ItemTracker:BuildMainUI()
+    -- === PLAYER LOGIN (UI creation)
+    if event == "PLAYER_LOGIN" then
+        if ItemTracker.BuildMainUI then
+            ItemTracker:BuildMainUI()
+        end
+
+        if ItemTracker.BuildRows then
+            ItemTracker:BuildRows()
+        end
+
+        if ItemTracker.Update then
+            ItemTracker:Update()
+        end
+
+        if ItemTracker.UpdateAutoUI then
+            ItemTracker:UpdateAutoUI()
+        end
+        return
+    end
+
+    -- === INVENTORY / BANK UPDATES
+    if ItemTracker.Update then
+        ItemTracker:Update()
+    end
+
+    if ItemTracker.UpdateAutoUI then
+        ItemTracker:UpdateAutoUI()
     end
 end)
 
@@ -42,20 +72,3 @@ SlashCmdList.ITEMTRACKER = function()
         )
     end
 end
--- ==========================================================
--- EVENTS
--- ==========================================================
-
-local ev = CreateFrame("Frame")
-ev:RegisterEvent("PLAYER_LOGIN")
-ev:RegisterEvent("BAG_UPDATE_DELAYED")
-
-ev:SetScript("OnEvent", function(_, event)
-    if event == "PLAYER_LOGIN" then
-        ItemTracker:InitDB()
-        ItemTracker:BuildRows()
-    end
-
-    ItemTracker:Update()
-end)
-
