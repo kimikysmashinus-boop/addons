@@ -30,22 +30,40 @@ frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 frame.title:SetPoint("TOP", 0, -10)
 frame.title:SetText("KimiBoss")
 
+
+function ItemTracker:FullRecalculate()
+    -- 1. ПОЛНАЯ пересборка базы
+    if self.InitDB then
+        self:InitDB()
+    end
+
+    -- 2. Индексация
+    self:BuildAutoIndex()
+
+    -- 3. ПОЛНЫЙ UI rebuild
+    self:BuildRows()
+    self:Update()
+
+    if self.UpdateAutoUI then
+        self:UpdateAutoUI()
+    end
+end
+
+
 -- ==========================================================
 -- ADD / REMOVE ITEM BUTTONS + POPUP
 -- ==========================================================
 
-local popupMode = "add" -- "add" | "remove"
 
--- ==========================================================
--- ADD / REMOVE + TOGGLE / CLOSE BUTTONS (ALIGNED)
--- ==========================================================
-
-local popupMode = "add" -- "add" | "remove"
 
 -- базовая Y-линия для всех кнопок
 local BTN_Y = -12
 local BTN_SIZE = 20
 local BTN_GAP = 4
+
+
+local ShowPopup
+
 
 -- ==========================================================
 -- PLUS BUTTON
@@ -153,29 +171,12 @@ end)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 -- ==========================================================
 -- POPUP FRAME
 -- ==========================================================
 
 local addFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-addFrame:SetSize(150, 40)
+addFrame:SetSize(200, 100)
 addFrame:SetBackdrop({
     bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
     edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -186,10 +187,17 @@ addFrame:SetFrameStrata("DIALOG")
 addFrame:SetClampedToScreen(true)
 addFrame:Hide()
 
+
+-- TITLE (ADD / REMOVE)
+addFrame.title = addFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+addFrame.title:SetPoint("TOP", 0, -6)
+
+
 -- INPUT
 addFrame.input = CreateFrame("EditBox", nil, addFrame, "InputBoxTemplate")
-addFrame.input:SetSize(55, 20)
-addFrame.input:SetPoint("LEFT", 10, 0)
+addFrame.input:SetSize(110, 20)
+addFrame.input:ClearAllPoints()
+addFrame.input:SetPoint("TOPLEFT", 10, -10)
 addFrame.input:SetNumeric(true)
 addFrame.input:SetAutoFocus(false)
 addFrame.input:SetScript("OnEnterPressed", function()
@@ -199,109 +207,447 @@ addFrame.input:SetScript("OnEscapePressed", function()
     addFrame:Hide()
 end)
 
+
+local function ItemExists(itemID)
+    for _, it in ipairs(ItemTracker.BaseItems or {}) do
+        if it.itemID == itemID then return true end
+    end
+    for _, it in ipairs(ItemTrackerDB.customItems or {}) do
+        if it.itemID == itemID then return true end
+    end
+    return false
+end
+
 -- OK BUTTON
 addFrame.ok = CreateFrame("Button", nil, addFrame, "UIPanelButtonTemplate")
-addFrame.ok:SetSize(50, 20)
-addFrame.ok:SetPoint("LEFT", addFrame.input, "RIGHT", 8, 0)
+addFrame.ok:ClearAllPoints()
+addFrame.ok:SetSize(60, 20)
+addFrame.ok:SetPoint("LEFT", addFrame.input, "RIGHT", 6, 0)
 addFrame.ok:SetText("OK")
 
 
-function ItemTracker:FullRecalculate()
-    -- логика
-    self:BuildAutoIndex()
+addFrame.ok:SetScript("OnClick", function()
+    local text = addFrame.input:GetText()
+    if not text or text == "" then return end
 
-    -- UI
-    if self.UpdateAutoUI then
-        self:UpdateAutoUI()
+    local itemID = tonumber(text)
+    if not itemID then return end
+
+    if ItemTracker.popupMode == "add" then
+        if not ItemExists(itemID) then
+            local name = GetItemInfo(itemID)
+            if name then
+                ItemTracker:AddCustomItem(itemID)
+                ItemTracker:FullRecalculate()
+            end
+        end
+    else
+        if ItemExists(itemID) then
+            ItemTracker:RemoveCustomItem(itemID)
+            ItemTracker:FullRecalculate()
+        end
     end
+
+    addFrame.input:SetText("")
+    addFrame.input:SetFocus() -- окно остаётся открытым
+end)
+
+
+
+
+
+
+
+
+-- PASTE IDS BUTTON
+addFrame.paste = CreateFrame("Button", nil, addFrame, "UIPanelButtonTemplate")
+addFrame.paste:SetSize(60, 20)
+addFrame.paste:SetPoint("TOP", addFrame.ok, "BOTTOM", 0, -6)
+addFrame.paste:SetText("Import")
+
+
+
+local exportFrame = CreateFrame("Frame", "ItemTrackerExportFrame", UIParent, "BackdropTemplate")
+exportFrame:SetSize(260, 200)
+exportFrame:SetBackdrop({
+    bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    edgeSize = 12,
+})
+exportFrame:SetBackdropColor(0, 0, 0, 0.95)
+exportFrame:SetFrameStrata("DIALOG")
+exportFrame:SetClampedToScreen(true)
+exportFrame:Hide()
+
+exportFrame:SetPoint("CENTER")
+
+-- CLOSE (X)
+exportFrame.close = CreateFrame("Button", nil, exportFrame, "UIPanelCloseButton")
+exportFrame.close:SetPoint("TOPRIGHT", -20, 2)
+exportFrame.close:SetScript("OnClick", function()
+    exportFrame:Hide()
+end)
+
+-- ESC CLOSE
+exportFrame:EnableKeyboard(true)
+exportFrame:SetPropagateKeyboardInput(true)
+exportFrame:SetScript("OnKeyDown", function(self, key)
+    if key == "ESCAPE" then
+        self:Hide()
+    end
+end)
+
+-- SCROLL
+exportFrame.scroll = CreateFrame("ScrollFrame", nil, exportFrame, "UIPanelScrollFrameTemplate")
+exportFrame.scroll:SetPoint("TOPLEFT", 10, -10)
+exportFrame.scroll:SetPoint("BOTTOMRIGHT", -30, 10)
+
+-- EDITBOX
+exportFrame.editBox = CreateFrame("EditBox", nil, exportFrame.scroll)
+exportFrame.editBox:SetMultiLine(true)
+exportFrame.editBox:SetFontObject(GameFontHighlightSmall)
+exportFrame.editBox:SetWidth(200)
+exportFrame.editBox:SetAutoFocus(false)
+exportFrame.editBox:EnableMouse(true)
+exportFrame.editBox:EnableKeyboard(true)
+
+
+exportFrame.editBox:SetScript("OnEscapePressed", function()
+    exportFrame:Hide()
+end)
+
+exportFrame.scroll:SetScrollChild(exportFrame.editBox)
+
+
+
+addFrame.export = CreateFrame("Button", nil, addFrame, "UIPanelButtonTemplate")
+addFrame.export:SetSize(60, 20)
+addFrame.export:SetPoint("TOP", addFrame.paste, "BOTTOM", 0, -4)
+addFrame.export:SetText("Export")
+
+addFrame.export:SetScript("OnClick", function()
+    local text = ItemTracker:BuildExportText()
+
+    exportFrame:Show()
+    exportFrame:Raise()
+    exportFrame:SetFrameStrata("DIALOG")
+    exportFrame:EnableMouse(true)
+    exportFrame.editBox:EnableKeyboard(true)
+
+
+    exportFrame.editBox:SetText(text)
+    exportFrame.editBox:HighlightText()
+    exportFrame.editBox:SetFocus()
+end)
+
+
+
+
+addFrame.close = CreateFrame("Button", nil, addFrame)
+addFrame.close:SetSize(20, 20)
+addFrame.close:SetPoint("TOPRIGHT", -0, -0)
+
+addFrame.close.icon = addFrame.close:CreateTexture(nil, "ARTWORK")
+addFrame.close.icon:SetAllPoints()
+addFrame.close.icon:SetTexture("Interface/Buttons/UI-Panel-MinimizeButton-Up")
+
+addFrame.close:SetScript("OnEnter", function(self)
+    self.icon:SetVertexColor(1, 0.3, 0.3)
+end)
+
+addFrame.close:SetScript("OnLeave", function(self)
+    self.icon:SetVertexColor(1, 1, 1)
+end)
+
+addFrame.close:SetScript("OnClick", function()
+    addFrame:Hide()
+end)
+
+
+-- ==========================================================
+-- MULTI IMPORT WINDOW (ADD / REMOVE)
+-- ==========================================================
+
+local importFrame = CreateFrame("Frame", "ItemTrackerImportFrame", UIParent, "BackdropTemplate")
+importFrame:SetSize(360, 230)
+importFrame:SetBackdrop({
+    bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    edgeSize = 12,
+})
+importFrame:SetBackdropColor(0, 0, 0, 0.95)
+importFrame:SetFrameStrata("DIALOG")
+importFrame:SetClampedToScreen(true)
+importFrame:Hide()
+
+importFrame:SetPoint("TOPLEFT", ItemTracker.mainFrame, "TOPRIGHT", 10, -20)
+
+
+-- ==========================================================
+-- ESC CLOSE (FRAME)
+-- ==========================================================
+
+importFrame:EnableKeyboard(true)
+importFrame:SetPropagateKeyboardInput(true)
+
+importFrame:SetScript("OnKeyDown", function(self, key)
+    if key == "ESCAPE" then
+        self:Hide()
+    end
+end)
+
+
+
+-- ==========================================================
+-- TITLE
+-- ==========================================================
+
+importFrame.title = importFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+importFrame.title:SetPoint("TOP", 0, -8)
+
+-- ==========================================================
+-- MULTILINE INPUT
+-- ==========================================================
+
+-- функция закрытия (ОБЯЗАТЕЛЬНО ДО SetScript)
+local function CloseImportFrame()
+    importFrame.editBox:SetText("") -- сброс текста
+    importFrame:Hide()
 end
 
-local function ShowPopup(mode)
-    popupMode = mode
+-- SCROLL FRAME
+importFrame.scroll = CreateFrame("ScrollFrame", nil, importFrame, "UIPanelScrollFrameTemplate")
+importFrame.scroll:SetPoint("TOPLEFT", 10, -30)
+importFrame.scroll:SetPoint("BOTTOMRIGHT", -30, 60)
 
+-- EDIT BOX
+importFrame.editBox = CreateFrame("EditBox", nil, importFrame.scroll)
+importFrame.editBox:SetMultiLine(true)
+importFrame.editBox:SetFontObject(GameFontHighlightSmall)
+importFrame.editBox:SetWidth(280)
+importFrame.editBox:SetAutoFocus(false)
+importFrame.editBox:EnableMouse(true)
+
+-- ESC в editBox → закрывает окно
+importFrame.editBox:SetScript("OnEscapePressed", CloseImportFrame)
+
+-- связываем scroll ↔ editBox
+importFrame.scroll:SetScrollChild(importFrame.editBox)
+
+-- ==========================================================
+-- CLOSE BUTTON (X)
+-- ==========================================================
+
+importFrame.close = CreateFrame("Button", nil, importFrame, "UIPanelCloseButton")
+importFrame.close:SetPoint("TOPRIGHT", 2, 2)
+importFrame.close:SetScript("OnClick", CloseImportFrame)
+
+-- ==========================================================
+-- ESC В ЛЮБОМ МЕСТЕ ОКНА
+-- ==========================================================
+importFrame:SetScript("OnKeyDown", function(self, key)
+    if key == "ESCAPE" then
+        CloseImportFrame()
+    end
+end)
+
+
+
+
+-- ==========================================================
+-- BUTTONS
+-- ==========================================================
+
+local function CreateBtn(text, y)
+    local b = CreateFrame("Button", nil, importFrame, "UIPanelButtonTemplate")
+    b:SetSize(120, 22)
+    b:SetPoint("BOTTOM", 0, y)
+    b:SetText(text)
+    return b
+end
+
+importFrame.okBtn     = CreateBtn("OK", 30)
+importFrame.clearBtn  = CreateBtn("CLEAR", 6)
+importFrame.exportBtn = CreateBtn("EXPORT", -18)
+
+-- ==========================================================
+-- HELPERS
+-- ==========================================================
+
+local function ParseIDs(text)
+    local ids = {}
+    for num in string.gmatch(text or "", "%d+") do
+        ids[tonumber(num)] = true
+    end
+    return ids
+end
+
+
+
+function ItemTracker:BuildExportText()
+    local lines = {}
+
+    for _, it in ipairs(ItemTracker.BaseItems or {}) do
+        if it.itemID then
+            table.insert(lines, tostring(it.itemID))
+        end
+    end
+
+    for _, it in ipairs(ItemTrackerDB.customItems or {}) do
+        if it.itemID then
+            table.insert(lines, tostring(it.itemID))
+        end
+    end
+
+    table.sort(lines, function(a, b)
+        return tonumber(a) < tonumber(b)
+    end)
+
+    return table.concat(lines, "\n")
+end
+
+
+-- ==========================================================
+-- OK BUTTON (ADD / REMOVE, WINDOW STAYS OPEN)
+-- ==========================================================
+
+importFrame.okBtn:SetScript("OnClick", function()
+    local text = importFrame.editBox:GetText()
+    if not text or text == "" then return end
+
+    local ids = ParseIDs(text)
+    local changed = 0
+
+    for itemID in pairs(ids) do
+        if ItemTracker.importMode == "add" then
+            if not ItemExists(itemID) then
+                local name = GetItemInfo(itemID)
+                if name then
+                    ItemTracker:AddCustomItem(itemID)
+                    changed = changed + 1
+                end
+            end
+        else -- REMOVE
+            if ItemExists(itemID) then
+                ItemTracker:RemoveCustomItem(itemID)
+                changed = changed + 1
+            end
+        end
+    end
+
+    if changed > 0 then
+        ItemTracker:FullRecalculate()
+    end
+
+    importFrame.editBox:SetText("") --
+end)
+
+-- ==========================================================
+-- CLEAR
+-- ==========================================================
+
+importFrame.clearBtn:SetScript("OnClick", function()
+    importFrame.editBox:SetText("")
+end)
+
+-- ==========================================================
+-- EXPORT (ONLY FOR ADD)
+-- ==========================================================
+
+importFrame.exportBtn:SetScript("OnClick", function()
+    print("Export not implemented yet")
+end)
+
+-- ==========================================================
+-- OPEN FROM PASTE BUTTON
+-- ==========================================================
+
+ItemTracker.importMode = nil
+
+
+addFrame.paste:SetScript("OnClick", function()
+    if ItemTracker.popupMode == "add" then
+
+        ItemTracker:OpenImportAdd()
+    else
+        ItemTracker:OpenImportRemove()
+    end
+end)
+
+
+
+
+
+function ItemTracker:OpenImportAdd()
+    self.importMode = "add"          -- 🔥 ВАЖНО
+    importFrame.title:SetText("Add Item IDs")
+    importFrame.exportBtn:Hide()
+    importFrame:Show()
+    importFrame.editBox:SetFocus()
+end
+
+function ItemTracker:OpenImportRemove()
+    self.importMode = "remove"       -- 🔥 ВАЖНО
+    importFrame.title:SetText("Remove Item IDs")
+    importFrame.exportBtn:Hide()
+    importFrame:Show()
+    importFrame.editBox:SetFocus()
+end
+
+
+
+
+-- ==========================================================
+-- ADD / REMOVE POPUP (SINGLE WINDOW, VISUAL MODES)
+-- ==========================================================
+
+
+
+ShowPopup = function(mode)
+    -- mode: "add" | "remove"
+    ItemTracker.popupMode = mode
+
+    -- POSITION (RIGHT FROM CURSOR)
     local scale = UIParent:GetScale()
     local x, y = GetCursorPosition()
     x = x / scale
     y = y / scale
 
     addFrame:ClearAllPoints()
-    addFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x + 10, y + 10)
-    addFrame:SetFrameLevel(frame:GetFrameLevel() + 50)
+    addFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x + 40, y + 15)
+
+    if ItemTracker.mainFrame then
+        addFrame:SetFrameLevel(ItemTracker.mainFrame:GetFrameLevel() + 50)
+    else
+        addFrame:SetFrameStrata("DIALOG")
+    end
+
+    -- TITLE
+    if addFrame.title then
+        addFrame.title:SetText(mode == "add" and "Add items" or "Remove items")
+    end
+
+    -- OK BUTTON
+    if addFrame.ok then
+        addFrame.ok:SetText(mode == "add" and "ADD" or "REMOVE")
+    end
+
+    -- EXPORT BUTTON
+    if addFrame.export then
+        if mode == "add" then
+            addFrame.export:Show()
+        else
+            addFrame.export:Hide()
+        end
+    end
 
     addFrame.input:SetText("")
     addFrame:Show()
     addFrame.input:SetFocus()
 end
 
-addBtn:SetScript("OnClick", function()
-    ShowPopup("add")
-end)
 
-removeBtn:SetScript("OnClick", function()
-    ShowPopup("remove")
-end)
 
-addFrame.ok:SetScript("OnClick", function()
-    local id = tonumber(addFrame.input:GetText())
-    if not id then return end
-
-    if popupMode == "add" then
-        for _, it in ipairs(ItemTracker.Items) do
-            if it.itemID == id then
-                print("Item already exists")
-                return
-            end
-        end
-
-        local name = GetItemInfo(id)
-        if not name then
-            print("Item not cached yet. Open tooltip once.")
-            return
-        end
-
-        local newItem = { itemID = id, name = name }
-        table.insert(ItemTrackerDB.items, newItem)
-        table.insert(ItemTracker.Items, newItem)
-        table.insert(ItemTrackerDB.order, #ItemTracker.Items)
-
-    else
-        local index
-        for i, it in ipairs(ItemTracker.Items) do
-            if it.itemID == id then
-                index = i
-                break
-            end
-        end
-
-        if not index then
-            print("Item not found")
-            return
-        end
-
-        table.remove(ItemTracker.Items, index)
-
-        for i = #ItemTrackerDB.items, 1, -1 do
-            if ItemTrackerDB.items[i].itemID == id then
-                table.remove(ItemTrackerDB.items, i)
-            end
-        end
-
-        for i = #ItemTrackerDB.order, 1, -1 do
-            if ItemTrackerDB.order[i] == index then
-                table.remove(ItemTrackerDB.order, i)
-            elseif ItemTrackerDB.order[i] > index then
-                ItemTrackerDB.order[i] = ItemTrackerDB.order[i] - 1
-            end
-        end
-
-        ItemTrackerDB.notes[index] = nil
-        ItemTrackerDB.tiers[index] = nil
-    end
-
-    addFrame:Hide()
-    ItemTracker:BuildRows()
-    ItemTracker:Update()
-end)
 
 -- ==========================================================
 -- SCROLL
@@ -325,18 +671,8 @@ content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 10)
 -- SCROLL
 -- ==========================================================
 
-local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-scroll:SetPoint("TOPLEFT", 10, -40)
-scroll:SetPoint("BOTTOMRIGHT", -30, 10)
 
-local content = CreateFrame("Frame", nil, frame)
-ItemTracker.content = content
-content:SetSize(480, 1)
 
-scroll:SetScrollChild(content)
-
-content:SetPoint("TOPLEFT", frame, "TOPLEFT", 10, -40)
-content:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -30, 10)
 
 -- ==========================================================
 -- DRAG GHOST
@@ -460,12 +796,17 @@ TierDropDown.initialize = function(self)
     local index = self.itemIndex
     if not index then return end
 
+    local item = ItemTracker.Items[index]
+    if not item then return end
+
+    local itemID = item.itemID
+
     for _, tier in ipairs(ItemTracker.TIERS) do
         UIDropDownMenu_AddButton({
             text = tier,
             notCheckable = true,
             func = function()
-                ItemTrackerDB.tiers[index] = tier
+                ItemTrackerDB.tiers[itemID] = tier
                 CloseDropDownMenus()
                 ItemTracker:Update()
             end,
@@ -476,12 +817,16 @@ TierDropDown.initialize = function(self)
         text = "Clear",
         notCheckable = true,
         func = function()
-            ItemTrackerDB.tiers[index] = nil
+            ItemTrackerDB.tiers[itemID] = nil
             CloseDropDownMenus()
             ItemTracker:Update()
         end,
     })
 end
+
+-- ==========================================================
+-- THRESHOLD POPUP
+-- ==========================================================
 
 function ItemTracker:ShowThresholdPopup(itemID)
     thresholdFrame.itemID = itemID
@@ -497,6 +842,7 @@ function ItemTracker:ShowThresholdPopup(itemID)
     thresholdFrame:SetPoint("CENTER")
     thresholdFrame:Show()
 end
+
 
 -- ==========================================================
 -- MOVE INDEX (DRAG SORT HELPER)
@@ -593,10 +939,10 @@ function ItemTracker:BuildRows()
             local index = ItemTrackerDB.order[row.pos]
             if not index then return end
 
-            local itemID = ItemTracker.Items[index].itemID
-            if not itemID then return end
+            local item = ItemTracker.Items[index]
+            if not item then return end
 
-            ItemTracker:ShowThresholdPopup(itemID)
+            ItemTracker:ShowThresholdPopup(item.itemID)
         end)
 
         -- NOTE
@@ -610,9 +956,11 @@ function ItemTracker:BuildRows()
         row.note:SetScript("OnEscapePressed", row.note.ClearFocus)
 
         row.note:SetScript("OnEditFocusLost", function(self)
-            ItemTrackerDB.notes[
-                ItemTrackerDB.order[row.pos]
-            ] = self:GetText()
+            local index = ItemTrackerDB.order[row.pos]
+            local item = ItemTracker.Items[index]
+            if not item then return end
+
+            ItemTrackerDB.notes[item.itemID] = self:GetText()
         end)
 
         -- DRAG
@@ -625,8 +973,10 @@ function ItemTracker:BuildRows()
 
             local index = ItemTrackerDB.order[self.pos]
             local item = ItemTracker.Items[index]
-            local count = ItemTracker:CountItem(item.itemID)
-            local tier = ItemTrackerDB.tiers[index] or "—"
+            if not item then return end
+
+            local count = ItemTracker:CountInBags(item.itemID)
+            local tier = ItemTrackerDB.tiers[item.itemID] or "—"
 
             ghost.icon:SetTexture(GetItemIcon(item.itemID))
             ghost.text:SetText(item.name .. " | " .. count .. " | " .. tier)
@@ -685,6 +1035,7 @@ function ItemTracker:BuildRows()
     end
 end
 
+
 -- ==========================================================
 -- UPDATE
 -- ==========================================================
@@ -695,7 +1046,8 @@ function ItemTracker:Update()
         local item = self.Items[index]
 
         if row and item then
-            local count = self:CountItem(item.itemID)
+            local count = self:CountInBags(item.itemID)
+
             local r, g, b = self:GetColor(count, item.itemID)
 
             row.pos = pos
@@ -707,9 +1059,11 @@ function ItemTracker:Update()
 
             row.count:SetText(count)
             row.count:SetTextColor(r, g, b)
+            local itemID = item.itemID
 
-            row.tier.text:SetText(ItemTrackerDB.tiers[index] or "—")
-            row.note:SetText(ItemTrackerDB.notes[index] or "")
+            row.tier.text:SetText(ItemTrackerDB.tiers[itemID] or "—")
+            row.note:SetText(ItemTrackerDB.notes[itemID] or "")
+
 
             row:Show()
         end
@@ -717,3 +1071,13 @@ function ItemTracker:Update()
 
     content:SetHeight(#ItemTrackerDB.order * ROW_H)
 end
+
+
+
+if ItemTracker.InitDB then
+    ItemTracker:InitDB()
+end
+
+ItemTracker:BuildRows()
+ItemTracker:Update()
+

@@ -7,31 +7,17 @@ local addonName = ...
 local ItemTracker = _G[addonName] or {}
 _G[addonName] = ItemTracker
 
--- ==========================================================
--- AUCTION CACHE
--- ==========================================================
 
-ItemTracker.auctionCache = {}
 
 -- ==========================================================
 -- BASE ITEM LIST
 -- ==========================================================
 
-ItemTracker.Items = {
-    { itemID = 13457, name = "Greater Fire Protection Potion" },
-    { itemID = 13458, name = "Greater Nature Protection Potion" },
-    { itemID = 13459, name = "Greater Shadow Protection Potion" },
-    { itemID = 13456, name = "Greater Frost Protection Potion" },
-    { itemID = 13461, name = "Greater Arcane Protection Potion" },
-    { itemID = 13454, name = "Greater Arcane Elixir" },
-    { itemID = 18253, name = "Major Rejuvenation Potion" },
-    { itemID = 13452, name = "Elixir of Mongoose" },
-    { itemID = 9206,  name = "Elixir of Giants" },
-    { itemID = 9224,  name = "Elixir of Demonslaying" },
-    { itemID = 13453, name = "Elixir of Brute Force" },
-    { itemID = 13442, name = "Mighty Rage Potion" },
-    { itemID = 3826,  name = "Mighty Troll's Blood Potion" },
-}
+ItemTracker.BaseItems = {}
+
+-- итоговый список (НЕ SavedVariables)
+ItemTracker.Items = {}
+
 
 -- ==========================================================
 -- DATABASE INIT
@@ -40,14 +26,22 @@ ItemTracker.Items = {
 function ItemTracker:InitDB()
     ItemTrackerDB = ItemTrackerDB or {}
 
-    ItemTrackerDB.items = ItemTrackerDB.items or {}
     ItemTrackerDB.order = ItemTrackerDB.order or {}
     ItemTrackerDB.colorThresholds = ItemTrackerDB.colorThresholds or {}
+    ItemTrackerDB.tiers = ItemTrackerDB.tiers or {}
+    ItemTrackerDB.notes = ItemTrackerDB.notes or {}
+
+    -- ТОЛЬКО пользовательские предметы
+    ItemTrackerDB.customItems = ItemTrackerDB.customItems or {}
+
     ItemTrackerDB.defaultThresholds = ItemTrackerDB.defaultThresholds or {
         gray   = 5,
         yellow = 19,
         green  = 30,
     }
+
+    -- пересобираем итоговый список
+    self:RebuildItems()
 
     -- безопасная пересборка order
     local used = {}
@@ -57,7 +51,7 @@ function ItemTracker:InitDB()
 
         if type(idx) ~= "number"
             or idx < 1
-            or idx > #ItemTracker.Items
+            or idx > #self.Items
             or used[idx]
         then
             table.remove(ItemTrackerDB.order, i)
@@ -66,12 +60,15 @@ function ItemTracker:InitDB()
         end
     end
 
-    for i = 1, #ItemTracker.Items do
+    for i = 1, #self.Items do
         if not used[i] then
             table.insert(ItemTrackerDB.order, i)
         end
     end
 end
+
+    
+
 
 -- ==========================================================
 -- AUTO UI
@@ -226,6 +223,7 @@ ItemTracker.COLUMNS = {
     },
 }
 
+
 -- ==========================================================
 -- BUILD AUTO INDEX
 -- ==========================================================
@@ -351,3 +349,103 @@ local function DelayedAuctionScan()
         end
     end)
 end
+--- ========================================================== вызов перещета
+
+function ItemTracker:RebuildItems()
+    wipe(self.Items)
+
+    local seen = {}
+
+    local function add(list)
+        for _, it in ipairs(list) do
+            if it.itemID and not seen[it.itemID] then
+                local name, _, icon = GetItemInfo(it.itemID)
+                if name then
+                    seen[it.itemID] = true
+                    table.insert(self.Items, {
+                        itemID = it.itemID,
+                        name   = name,
+                        icon   = icon,
+                    })
+                end
+            end
+        end
+    end
+
+    add(self.BaseItems)
+    add(ItemTrackerDB.customItems)
+end
+
+function ItemTracker:AddCustomItem(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return end
+
+    -- защита от дублей
+    for _, it in ipairs(ItemTrackerDB.customItems) do
+        if it.itemID == itemID then
+            return
+        end
+    end
+
+    table.insert(ItemTrackerDB.customItems, { itemID = itemID })
+
+    self:RebuildItems()
+    self:BuildRows()
+    self:Update()
+end
+
+
+function ItemTracker:RemoveCustomItem(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return end
+
+    local removed = false
+
+    for i = #ItemTrackerDB.customItems, 1, -1 do
+        if ItemTrackerDB.customItems[i].itemID == itemID then
+            table.remove(ItemTrackerDB.customItems, i)
+            removed = true
+        end
+    end
+
+    if not removed then
+        return
+    end
+
+    -- чистим связанные данные
+    ItemTrackerDB.tiers[itemID] = nil
+    ItemTrackerDB.notes[itemID] = nil
+    ItemTrackerDB.colorThresholds[itemID] = nil
+
+    self:RebuildItems()
+    self:BuildRows()
+    self:Update()
+end
+
+
+function ItemTracker:BuildExportText()
+    local lines = {}
+
+    -- гарантируем актуальность
+    self:BuildAutoIndex()
+
+    for _, col in ipairs(self.COLUMNS) do
+        local list = self.AutoIndex[col.key]
+
+        if list and #list > 0 then
+            table.insert(lines, "[" .. col.key .. "]")
+
+            for _, itemID in ipairs(list) do
+                table.insert(lines, tostring(itemID))
+            end
+
+            table.insert(lines, "")
+        end
+    end
+
+    return table.concat(lines, "\n")
+end
+
+
+
+
