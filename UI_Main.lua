@@ -629,7 +629,7 @@ ShowPopup = function(mode)
 
     -- OK BUTTON
     if addFrame.ok then
-        addFrame.ok:SetText(mode == "add" and "ADD" or "REMOVE")
+        addFrame.ok:SetText(mode == "add" and "ADD" or "Remove")
     end
 
     -- EXPORT BUTTON
@@ -1046,7 +1046,8 @@ function ItemTracker:Update()
         local item = self.Items[index]
 
         if row and item then
-            local count = self:CountInBags(item.itemID)
+            local count = self:GetEffectiveItemCount(item.itemID)
+
 
             local r, g, b = self:GetColor(count, item.itemID)
 
@@ -1072,12 +1073,11 @@ function ItemTracker:Update()
     content:SetHeight(#ItemTrackerDB.order * ROW_H)
 end
 
-
-
-if ItemTracker.InitDB then
-    ItemTracker:InitDB()
+function ItemTracker:GetEffectiveItemCount(itemID)
+    return self:CountItem(itemID)
 end
 
-ItemTracker:BuildRows()
-ItemTracker:Update()
+
+
+
 

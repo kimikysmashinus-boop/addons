@@ -19,6 +19,27 @@ ItemTracker.BaseItems = {}
 ItemTracker.Items = {}
 
 
+
+local itemFixer = CreateFrame("Frame")
+itemFixer:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+itemFixer:SetScript("OnEvent", function(_, _, itemID)
+    for _, it in ipairs(ItemTracker.Items or {}) do
+        if it.itemID == itemID then
+            local name, _, icon = GetItemInfo(itemID)
+            if name then
+                it.name = name
+                it.icon = icon
+                ItemTracker:Update()
+                if ItemTracker.UpdateAutoUI then
+                    ItemTracker:UpdateAutoUI()
+                end
+            end
+        end
+    end
+end)
+
+
+
 -- ==========================================================
 -- DATABASE INIT
 -- ==========================================================
@@ -293,13 +314,16 @@ end
 -- AUCTION CACHE
 -- ==========================================================
 
+-- ==========================================================
+-- AUCTION CACHE
+-- ==========================================================
+
 ItemTracker.auctionCache = ItemTracker.auctionCache or {}
 
 local function ScanAuction()
     wipe(ItemTracker.auctionCache)
 
     local num = GetNumAuctionItems("owner")
-    DEFAULT_CHAT_FRAME:AddMessage("SCAN AUCTION ITEMS: "..num)
 
     for i = 1, num do
         local _, _, count = GetAuctionItemInfo("owner", i)
@@ -316,30 +340,6 @@ local function ScanAuction()
     end
 end
 
-
-local auc = CreateFrame("Frame")
-auc:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
-auc:RegisterEvent("AUCTION_HOUSE_SHOW")
-
-auc:SetScript("OnEvent", function(_, event)
-    if event == "AUCTION_HOUSE_SHOW"
-        or event == "AUCTION_OWNED_LIST_UPDATE"
-    then
-        ScanAuction()
-        ItemTracker:Update()
-        if ItemTracker.UpdateAutoUI then
-            ItemTracker:UpdateAutoUI()
-        end
-    end
-end)
-
-
-function ItemTracker:UpdateData()
-    self:BuildAutoIndex()
-end
-
-
-
 local function DelayedAuctionScan()
     C_Timer.After(0.3, function()
         ScanAuction()
@@ -349,6 +349,38 @@ local function DelayedAuctionScan()
         end
     end)
 end
+
+-- 🔑 ВОТ ЭТОГО У ТЕБЯ НЕ ХВАТАЛО
+local auc = CreateFrame("Frame")
+auc:RegisterEvent("AUCTION_HOUSE_SHOW")
+auc:RegisterEvent("AUCTION_OWNED_LIST_UPDATE")
+
+auc:SetScript("OnEvent", function(_, event)
+    if event == "AUCTION_HOUSE_SHOW" then
+        DelayedAuctionScan()
+        return
+    end
+
+    if event == "AUCTION_OWNED_LIST_UPDATE" then
+        ScanAuction()
+        ItemTracker:Update()
+        if ItemTracker.UpdateAutoUI then
+            ItemTracker:UpdateAutoUI()
+        end
+    end
+end)
+
+
+
+
+
+function ItemTracker:UpdateData()
+    self:BuildAutoIndex()
+end
+
+
+
+
 --- ========================================================== вызов перещета
 
 function ItemTracker:RebuildItems()
@@ -359,15 +391,15 @@ function ItemTracker:RebuildItems()
     local function add(list)
         for _, it in ipairs(list) do
             if it.itemID and not seen[it.itemID] then
+                seen[it.itemID] = true
+
                 local name, _, icon = GetItemInfo(it.itemID)
-                if name then
-                    seen[it.itemID] = true
-                    table.insert(self.Items, {
-                        itemID = it.itemID,
-                        name   = name,
-                        icon   = icon,
-                    })
-                end
+
+                table.insert(self.Items, {
+                    itemID = it.itemID,
+                    name   = name or ("item:" .. it.itemID),
+                    icon   = icon,
+                })
             end
         end
     end
@@ -375,6 +407,7 @@ function ItemTracker:RebuildItems()
     add(self.BaseItems)
     add(ItemTrackerDB.customItems)
 end
+
 
 function ItemTracker:AddCustomItem(itemID)
     itemID = tonumber(itemID)
@@ -446,6 +479,23 @@ function ItemTracker:BuildExportText()
     return table.concat(lines, "\n")
 end
 
+
+function ItemTracker:MoveIndex(tbl, from, to)
+    if not tbl or from == to then return end
+    local v = table.remove(tbl, from)
+    table.insert(tbl, to, v)
+end
+
+
+function ItemTracker:CountItem(itemID)
+    local bags = GetItemCount(itemID, false)
+    local bank = GetItemCount(itemID, true) - bags
+    local auction = self.auctionCache[itemID] or 0
+   
+
+
+    return bags + bank + auction
+end
 
 
 

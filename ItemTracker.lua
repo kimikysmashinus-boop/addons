@@ -1,6 +1,6 @@
 -- ==========================================================
 -- ItemTracker.lua
--- Core / Entry Point
+-- Core / Entry Point (STABLE)
 -- ==========================================================
 
 local addonName = ...
@@ -8,19 +8,29 @@ local ItemTracker = _G[addonName] or {}
 _G[addonName] = ItemTracker
 
 -- ==========================================================
--- ADDON LOADER
+-- ADDON LOADER (SINGLE, CORRECT)
 -- ==========================================================
 
 local loader = CreateFrame("Frame")
+
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
+
+-- inventory / bank
 loader:RegisterEvent("BAG_UPDATE_DELAYED")
 loader:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
 
-loader:SetScript("OnEvent", function(_, event, arg)
-    -- === ADDON LOADED (DB only)
+-- auction
+loader:RegisterEvent("AUCTION_HOUSE_SHOW")
+loader:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
+
+loader:SetScript("OnEvent", function(self, event, arg1)
+
+    -- ======================================================
+    -- ADDON LOADED (DB ONLY)
+    -- ======================================================
     if event == "ADDON_LOADED" then
-        if arg ~= addonName then return end
+        if arg1 ~= addonName then return end
 
         if ItemTracker.InitDB then
             ItemTracker:InitDB()
@@ -28,7 +38,9 @@ loader:SetScript("OnEvent", function(_, event, arg)
         return
     end
 
-    -- === PLAYER LOGIN (UI creation)
+    -- ======================================================
+    -- PLAYER LOGIN (UI + FIRST BUILD)
+    -- ======================================================
     if event == "PLAYER_LOGIN" then
         if ItemTracker.BuildMainUI then
             ItemTracker:BuildMainUI()
@@ -48,13 +60,37 @@ loader:SetScript("OnEvent", function(_, event, arg)
         return
     end
 
-    -- === INVENTORY / BANK UPDATES
-    if ItemTracker.Update then
-        ItemTracker:Update()
+    -- ======================================================
+    -- INVENTORY / BANK UPDATE
+    -- ======================================================
+    if event == "BAG_UPDATE_DELAYED"
+    or event == "PLAYERBANKSLOTS_CHANGED" then
+
+        if ItemTracker.Update then
+            ItemTracker:Update()
+        end
+
+        if ItemTracker.UpdateAutoUI then
+            ItemTracker:UpdateAutoUI()
+        end
+        return
     end
 
-    if ItemTracker.UpdateAutoUI then
-        ItemTracker:UpdateAutoUI()
+    -- ======================================================
+    -- AUCTION HOUSE
+    -- ======================================================
+    if event == "AUCTION_HOUSE_SHOW" then
+        if ItemTracker.ScanAuctionHouse then
+            ItemTracker:ScanAuctionHouse()
+        end
+        return
+    end
+
+    if event == "AUCTION_ITEM_LIST_UPDATE" then
+        if ItemTracker.UpdateAuctionData then
+            ItemTracker:UpdateAuctionData()
+        end
+        return
     end
 end)
 
